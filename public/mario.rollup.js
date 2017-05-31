@@ -4,7 +4,7 @@ function setType(fullName, cons) {
 }
 
 var _Symbol = {
-    reflection: Symbol("reflection")
+    reflection: Symbol("reflection"),
 };
 
 class NonDeclaredType {
@@ -34,6 +34,10 @@ function Interface(definition) {
 }
 
 
+/**
+ * Returns the parent if this is a declared generic type or the argument otherwise.
+ * Attention: Unlike .NET this doesn't throw an exception if type is not generic.
+ */
 
 
 function hasInterface(obj, interfaceName) {
@@ -46,6 +50,13 @@ function hasInterface(obj, interfaceName) {
     }
     return false;
 }
+/**
+ * Returns:
+ * - Records: array with names of fields
+ * - Classes: array with names of getters
+ * - Nulls and unions: empty array
+ * - JS Objects: The result of calling Object.getOwnPropertyNames
+ */
 function getPropertyNames(obj) {
     if (obj == null) {
         return [];
@@ -56,7 +67,8 @@ function getPropertyNames(obj) {
 
 function toString(obj, quoteStrings = false) {
     function isObject(x) {
-        return x !== null && typeof x === "object" && !(x instanceof Number) && !(x instanceof String) && !(x instanceof Boolean);
+        return x !== null && typeof x === "object" && !(x instanceof Number)
+            && !(x instanceof String) && !(x instanceof Boolean);
     }
     if (obj == null || typeof obj === "number") {
         return String(obj);
@@ -64,7 +76,7 @@ function toString(obj, quoteStrings = false) {
     if (typeof obj === "string") {
         return quoteStrings ? JSON.stringify(obj) : obj;
     }
-    if (typeof obj.ToString == "function") {
+    if (typeof obj.ToString === "function") {
         return obj.ToString();
     }
     if (hasInterface(obj, "FSharpUnion")) {
@@ -74,28 +86,32 @@ function toString(obj, quoteStrings = false) {
             case 1:
                 return uci[0];
             case 2:
+                // For simplicity let's always use parens, in .NET they're ommitted in some cases
                 return uci[0] + " (" + toString(obj.data, true) + ")";
             default:
                 return uci[0] + " (" + obj.data.map((x) => toString(x, true)).join(",") + ")";
         }
     }
     try {
-        return JSON.stringify(obj, function (k, v) {
+        return JSON.stringify(obj, (k, v) => {
             return v && v[Symbol.iterator] && !Array.isArray(v) && isObject(v) ? Array.from(v)
                 : v && typeof v.ToString === "function" ? toString(v) : v;
         });
     }
     catch (err) {
-        return "{" + Object.getOwnPropertyNames(obj).map(k => k + ": " + String(obj[k])).join(", ") + "}";
+        // Fallback for objects with circular references
+        return "{" + Object.getOwnPropertyNames(obj).map((k) => k + ": " + String(obj[k])).join(", ") + "}";
     }
 }
 function hash(x) {
-    if (x != null && typeof x.GetHashCode == "function") {
+    if (x != null && typeof x.GetHashCode === "function") {
         return x.GetHashCode();
     }
     else {
-        let s = JSON.stringify(x);
-        let h = 5381, i = 0, len = s.length;
+        const s = JSON.stringify(x);
+        let h = 5381;
+        let i = 0;
+        const len = s.length;
         while (i < len) {
             h = (h * 33) ^ s.charCodeAt(i++);
         }
@@ -103,77 +119,111 @@ function hash(x) {
     }
 }
 function equals(x, y) {
-    if (x === y)
+    // Optimization if they are referencially equal
+    if (x === y) {
         return true;
-    else if (x == null)
+    }
+    else if (x == null) {
         return y == null;
-    else if (y == null)
+    }
+    else if (y == null) {
         return false;
-    else if (Object.getPrototypeOf(x) !== Object.getPrototypeOf(y))
+    }
+    else if (Object.getPrototypeOf(x) !== Object.getPrototypeOf(y)) {
         return false;
-    else if (typeof x.Equals === "function")
+        // Equals override or IEquatable implementation
+    }
+    else if (typeof x.Equals === "function") {
         return x.Equals(y);
+    }
     else if (Array.isArray(x)) {
-        if (x.length != y.length)
+        if (x.length !== y.length) {
             return false;
-        for (let i = 0; i < x.length; i++)
-            if (!equals(x[i], y[i]))
+        }
+        for (let i = 0; i < x.length; i++) {
+            if (!equals(x[i], y[i])) {
                 return false;
+            }
+        }
         return true;
     }
     else if (ArrayBuffer.isView(x)) {
-        if (x.byteLength !== y.byteLength)
+        if (x.byteLength !== y.byteLength) {
             return false;
-        const dv1 = new DataView(x.buffer), dv2 = new DataView(y.buffer);
-        for (let i = 0; i < x.byteLength; i++)
-            if (dv1.getUint8(i) !== dv2.getUint8(i))
+        }
+        const dv1 = new DataView(x.buffer);
+        const dv2 = new DataView(y.buffer);
+        for (let i = 0; i < x.byteLength; i++) {
+            if (dv1.getUint8(i) !== dv2.getUint8(i)) {
                 return false;
+            }
+        }
         return true;
     }
-    else if (x instanceof Date)
+    else if (x instanceof Date) {
         return x.getTime() === y.getTime();
-    else
+    }
+    else {
         return false;
+    }
 }
 
 function compare(x, y) {
-    if (x === y)
+    // Optimization if they are referencially equal
+    if (x === y) {
         return 0;
-    if (x == null)
+    }
+    else if (x == null) {
         return y == null ? 0 : -1;
-    else if (y == null)
-        return 1;
-    else if (Object.getPrototypeOf(x) !== Object.getPrototypeOf(y))
+    }
+    else if (y == null) {
+        return 1; // everything is bigger than null
+    }
+    else if (Object.getPrototypeOf(x) !== Object.getPrototypeOf(y)) {
         return -1;
-    else if (typeof x.CompareTo === "function")
+        // Some types (see Long.ts) may just implement the function and not the interface
+        // else if (hasInterface(x, "System.IComparable"))
+    }
+    else if (typeof x.CompareTo === "function") {
         return x.CompareTo(y);
+    }
     else if (Array.isArray(x)) {
-        if (x.length != y.length)
+        if (x.length !== y.length) {
             return x.length < y.length ? -1 : 1;
-        for (let i = 0, j = 0; i < x.length; i++)
-            if ((j = compare(x[i], y[i])) !== 0)
+        }
+        for (let i = 0, j = 0; i < x.length; i++) {
+            j = compare(x[i], y[i]);
+            if (j !== 0) {
                 return j;
+            }
+        }
         return 0;
     }
     else if (ArrayBuffer.isView(x)) {
-        if (x.byteLength != y.byteLength)
+        if (x.byteLength !== y.byteLength) {
             return x.byteLength < y.byteLength ? -1 : 1;
-        const dv1 = new DataView(x.buffer), dv2 = new DataView(y.buffer);
+        }
+        const dv1 = new DataView(x.buffer);
+        const dv2 = new DataView(y.buffer);
         for (let i = 0, b1 = 0, b2 = 0; i < x.byteLength; i++) {
             b1 = dv1.getUint8(i), b2 = dv2.getUint8(i);
-            if (b1 < b2)
+            if (b1 < b2) {
                 return -1;
-            if (b1 > b2)
+            }
+            if (b1 > b2) {
                 return 1;
+            }
         }
         return 0;
     }
     else if (x instanceof Date) {
-        let xtime = x.getTime(), ytime = y.getTime();
+        const xtime = x.getTime();
+        const ytime = y.getTime();
         return xtime === ytime ? 0 : (xtime < ytime ? -1 : 1);
     }
     else if (typeof x === "object") {
-        let xhash = hash(x), yhash = hash(y);
+        const xhash = hash(x);
+        const yhash = hash(y);
         if (xhash === yhash) {
             return equals(x, y) ? 0 : -1;
         }
@@ -181,32 +231,37 @@ function compare(x, y) {
             return xhash < yhash ? -1 : 1;
         }
     }
-    else
+    else {
         return x < y ? -1 : 1;
+    }
 }
 function equalsRecords(x, y) {
+    // Optimization if they are referencially equal
     if (x === y) {
         return true;
     }
     else {
         const keys = getPropertyNames(x);
-        for (let i = 0; i < keys.length; i++) {
-            if (!equals(x[keys[i]], y[keys[i]]))
+        for (const key of keys) {
+            if (!equals(x[key], y[key])) {
                 return false;
+            }
         }
         return true;
     }
 }
 function compareRecords(x, y) {
+    // Optimization if they are referencially equal
     if (x === y) {
         return 0;
     }
     else {
         const keys = getPropertyNames(x);
-        for (let i = 0; i < keys.length; i++) {
-            let res = compare(x[keys[i]], y[keys[i]]);
-            if (res !== 0)
+        for (const key of keys) {
+            const res = compare(x[key], y[key]);
+            if (res !== 0) {
                 return res;
+            }
         }
         return 0;
     }
@@ -217,7 +272,7 @@ function compareUnions(x, y) {
         return 0;
     }
     else {
-        let res = x.tag < y.tag ? -1 : (x.tag > y.tag ? 1 : 0);
+        const res = x.tag < y.tag ? -1 : (x.tag > y.tag ? 1 : 0);
         return res !== 0 ? res : compare(x.data, y.data);
     }
 }
@@ -842,6 +897,7 @@ function update(vpt, ctr) {
   return new viewport(new xy(new_x, new_y), vpt.v_dim, vpt.m_dim);
 }
 
+// This module is split from List.ts to prevent cyclic dependencies
 function ofArray(args, base) {
     let acc = base || new List$1();
     for (let i = args.length - 1; i >= 0; i--) {
@@ -855,48 +911,61 @@ class List$1 {
         this.tail = tail;
     }
     ToString() {
-        return "[" + Array.from(this).map(x => toString(x)).join("; ") + "]";
+        return "[" + Array.from(this).map((x) => toString(x)).join("; ") + "]";
     }
     Equals(x) {
+        // Optimization if they are referencially equal
         if (this === x) {
             return true;
         }
         else {
-            const iter1 = this[Symbol.iterator](), iter2 = x[Symbol.iterator]();
-            for (;;) {
-                let cur1 = iter1.next(), cur2 = iter2.next();
-                if (cur1.done)
+            const iter1 = this[Symbol.iterator]();
+            const iter2 = x[Symbol.iterator]();
+            while (true) {
+                const cur1 = iter1.next();
+                const cur2 = iter2.next();
+                if (cur1.done) {
                     return cur2.done ? true : false;
-                else if (cur2.done)
+                }
+                else if (cur2.done) {
                     return false;
-                else if (!equals(cur1.value, cur2.value))
+                }
+                else if (!equals(cur1.value, cur2.value)) {
                     return false;
+                }
             }
         }
     }
     CompareTo(x) {
+        // Optimization if they are referencially equal
         if (this === x) {
             return 0;
         }
         else {
             let acc = 0;
-            const iter1 = this[Symbol.iterator](), iter2 = x[Symbol.iterator]();
-            for (;;) {
-                let cur1 = iter1.next(), cur2 = iter2.next();
-                if (cur1.done)
+            const iter1 = this[Symbol.iterator]();
+            const iter2 = x[Symbol.iterator]();
+            while (true) {
+                const cur1 = iter1.next();
+                const cur2 = iter2.next();
+                if (cur1.done) {
                     return cur2.done ? acc : -1;
-                else if (cur2.done)
+                }
+                else if (cur2.done) {
                     return 1;
+                }
                 else {
                     acc = compare(cur1.value, cur2.value);
-                    if (acc != 0)
+                    if (acc !== 0) {
                         return acc;
+                    }
                 }
             }
         }
     }
     get length() {
-        let cur = this, acc = 0;
+        let cur = this;
+        let acc = 0;
         while (cur.tail != null) {
             cur = cur.tail;
             acc++;
@@ -910,18 +979,48 @@ class List$1 {
                 const tmp = cur;
                 cur = cur.tail;
                 return { done: tmp.tail == null, value: tmp.head };
-            }
+            },
         };
     }
+    //   append(ys: List<T>): List<T> {
+    //     return append(this, ys);
+    //   }
+    //   choose<U>(f: (x: T) => U, xs: List<T>): List<U> {
+    //     return choose(f, this);
+    //   }
+    //   collect<U>(f: (x: T) => List<U>): List<U> {
+    //     return collect(f, this);
+    //   }
+    //   filter(f: (x: T) => boolean): List<T> {
+    //     return filter(f, this);
+    //   }
+    //   where(f: (x: T) => boolean): List<T> {
+    //     return filter(f, this);
+    //   }
+    //   map<U>(f: (x: T) => U): List<U> {
+    //     return map(f, this);
+    //   }
+    //   mapIndexed<U>(f: (i: number, x: T) => U): List<U> {
+    //     return mapIndexed(f, this);
+    //   }
+    //   partition(f: (x: T) => boolean): [List<T>, List<T>] {
+    //     return partition(f, this) as [List<T>, List<T>];
+    //   }
+    //   reverse(): List<T> {
+    //     return reverse(this);
+    //   }
+    //   slice(lower: number, upper: number): List<T> {
+    //     return slice(lower, upper, this);
+    //   }
     [_Symbol.reflection]() {
         return {
             type: "Microsoft.FSharp.Collections.FSharpList",
-            interfaces: ["System.IEquatable", "System.IComparable"]
+            interfaces: ["System.IEquatable", "System.IComparable"],
         };
     }
 }
 
-function fold(f, acc, xs) {
+function fold$1(f, acc, xs) {
     if (Array.isArray(xs) || ArrayBuffer.isView(xs)) {
         return xs.reduce(f, acc);
     }
@@ -929,8 +1028,9 @@ function fold(f, acc, xs) {
         let cur;
         for (let i = 0, iter = xs[Symbol.iterator]();; i++) {
             cur = iter.next();
-            if (cur.done)
+            if (cur.done) {
                 break;
+            }
             acc = f(acc, cur.value, i);
         }
         return acc;
@@ -947,18 +1047,30 @@ function fold(f, acc, xs) {
 
 
 
-function iterate(f, xs) {
-    fold((_, x) => f(x), null, xs);
+function iterate$1(f, xs) {
+    fold$1((_, x) => f(x), null, xs);
 }
+
+
+
+
+
+
+// A export function 'length' method causes problems in JavaScript -- https://github.com/Microsoft/TypeScript/issues/442
+
+// ----------------------------------------------
+// These functions belong to Seq.ts but are
+// implemented here to prevent cyclic dependencies
 
 function append$$1(xs, ys) {
-    return fold((acc, x) => new List$1(x, acc), ys, reverse$$1(xs));
+    return fold$1((acc, x) => new List$1(x, acc), ys, reverse$$1(xs));
 }
 
 
+// TODO: should be xs: Iterable<List<T>>
 
 function filter$$1(f, xs) {
-    return reverse$$1(fold((acc, x) => f(x) ? new List$1(x, acc) : acc, new List$1(), xs));
+    return reverse$$1(fold$1((acc, x) => f(x) ? new List$1(x, acc) : acc, new List$1(), xs));
 }
 
 
@@ -967,8 +1079,13 @@ function filter$$1(f, xs) {
 
 
 function reverse$$1(xs) {
-    return fold((acc, x) => new List$1(x, acc), new List$1(), xs);
+    return fold$1((acc, x) => new List$1(x, acc), new List$1(), xs);
 }
+
+
+/* ToDo: instance unzip() */
+
+/* ToDo: instance unzip3() */
 
 class part_params {
   constructor(sprite$$1, rot, lifetime) {
@@ -1427,7 +1544,7 @@ function update_player(player, keys, context$$1) {
   const prev_jumping = player.jumping;
   const prev_dir = player.dir;
   const prev_vx = Math.abs(player.vel.x);
-  iterate(function (controls$$1) {
+  iterate$1(function (controls$$1) {
     update_player_keys(player, controls$$1);
   }, keys);
   const v = player.vel.x * friction;
@@ -2125,7 +2242,7 @@ function update_collidable(state, collid, all_collids) {
 function translate_keys() {
   const k = pressed_keys;
   const ctrls = ofArray([[k.left, new controls(0)], [k.right, new controls(1)], [k.up, new controls(2)], [k.down, new controls(3)]]);
-  return fold(function (a, x) {
+  return fold$1(function (a, x) {
     return x[0] ? new List$1(x[1], a) : a;
   }, new List$1(), ctrls);
 }
@@ -2203,10 +2320,10 @@ function update_loop(canvas$$1, player, objs, map_dim_0, map_dim_1) {
         let state_2;
         const vpt_1 = update(state_1.vpt, get_obj(player_2).pos);
         state_2 = new st(state_1.bgd, state_1.ctx, vpt_1, state_1.map, state_1.score, state_1.coins, state_1.multiplier, state_1.game_over);
-        iterate(function (obj$$1) {
+        iterate$1(function (obj$$1) {
           run_update_collid(state_2, obj$$1, objs_1);
         }, objs_1);
-        iterate(function (part) {
+        iterate$1(function (part) {
           run_update_particle(state_2, part);
         }, parts);
         fps(canvas$$1, ~~fps$$1);
@@ -2719,7 +2836,7 @@ function preload() {
     return null;
   };
 
-  iterate(function (img_src) {
+  iterate$1(function (img_src) {
     const img_src_1 = "sprites/" + img_src;
     const img = document.createElement("img");
     img.src = img_src_1;
